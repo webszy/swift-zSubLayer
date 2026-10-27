@@ -1,0 +1,15 @@
+{
+  "originHash" : "8c981b507d9d78a29de2f4a0f4f7557a602bbdb540920485663e0338055666e7",
+  "pins" : [
+    {
+      "identity" : "storekitthekit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/nicolaischneider/StoreKitTheKit.git",
+      "state" : {
+        "revision" : "a77bf8360680241652461f0ac4cb09fdca8c3a48",
+        "version" : "1.5.4"
+      }
+    }
+  ],
+  "version" : 3
+}

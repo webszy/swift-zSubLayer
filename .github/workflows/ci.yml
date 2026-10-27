@@ -1,0 +1,15 @@
+name: Swift Package CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve, build and test on an installed iOS Simulator
+        run: bash scripts/test-ios.sh
