@@ -5,7 +5,7 @@ import Testing
 import ZSubLayer
 
 /// A single process-wide StoreKit singleton and test store: never parallelize this suite.
-@Suite(.serialized, .timeLimit(.minutes(2)))
+@Suite(.serialized, .timeLimit(.minutes(3)))
 @MainActor
 struct StoreKitIntegrationTests {
     private static let monthly = "com.example.zsublayer.monthly"
@@ -139,20 +139,38 @@ struct StoreKitIntegrationTests {
         defer { session.clearTransactions(); session.resetToDefaultState() }
         session.shouldEnterBillingRetryOnRenewal = true
         session.billingGracePeriodIsEnabled = grace
-        // At the fastest rate grace lasts only two seconds and can expire before
-        // a busy CI runner delivers the renewal status. Keep a 30-second window.
-        // Set the rate before purchase: existing transactions retain their deadline.
-        session.timeRate = .oneRenewalEveryThirtySeconds
-        _ = try await manager.purchase(Self.monthly)
+        session.timeRate = .realTime
+        // Backdate a real signed purchase so it renews shortly, while retry/grace
+        // retain their real-time lifetimes. Accelerating time also shortens these
+        // states and lets a busy CI daemon skip them before delivery.
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let deadline = Date().addingTimeInterval(30)
+        // A monthly anniversary may not exist at month-end; yearly covers that
+        // case, while monthly covers February 29 in a year after a leap year.
+        let candidates: [(String, Calendar.Component)] = [(Self.monthly, .month), (Self.yearly, .year)]
+        let (productID, purchaseDate) = try #require(candidates.compactMap { id, period -> (String, Date)? in
+            guard let date = calendar.date(byAdding: period, value: -1, to: deadline),
+                  let anniversary = calendar.date(byAdding: period, value: 1, to: date),
+                  abs(anniversary.timeIntervalSince(deadline)) < 1 else { return nil }
+            return (id, date)
+        }.first)
+        let purchased = try await session.buyProduct(identifier: productID, options: [.purchaseDate(purchaseDate)])
+        let expiry = try #require(purchased.expirationDate)
+        try #require(purchased.environment == .xcode)
+        try #require(expiry > Date() && expiry <= deadline.addingTimeInterval(1))
+        try await waitFor { manager.hasActiveEntitlement(for: productID) }
         do {
-            try await waitFor(timeout: 75) {
+            // The runner has taken over a minute to synchronize a renewal.
+            // Real-time retry/grace remain observable throughout that delay.
+            try await waitFor(timeout: 150) {
                 if grace {
                     if case .gracePeriod = manager.subscriptionStatus { return manager.isPremium }
                 } else if manager.subscriptionStatus == .billingRetry { return !manager.isPremium }
                 return false
             }
         } catch StoreKitWaitError.timeout {
-            let product = try await Product.products(for: [Self.monthly]).first
+            let product = try await Product.products(for: [productID]).first
             let statuses = try await product?.subscription?.status ?? []
             throw StoreKitWaitError.renewalTimeout(
                 grace: grace, manager: String(describing: manager.subscriptionStatus),

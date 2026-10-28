@@ -1,4 +1,61 @@
-# CI toolchain alignment — 2026-10-28
+# CI renewal fixture correction — 2026-10-28
+
+Status: **full local regression passed, 53/53 functions; final timeout-bound
+check passed; new GitHub Actions verification pending**.
+
+The full Actions rerun after toolchain alignment,
+[run 40713829243](https://github.com/webszy/swift-zSubLayer/actions/runs/40713829243),
+still failed both retry/grace parameter cases. It used Xcode 27.1, SDK 27.1 and
+iPhone Duo / iOS 27.1 (`24A94425`), matching the local toolchain/runtime. The
+xcresult again reports **52 passed, 1 failed, 0 skipped** functions. All other
+integration scenarios, 42 unit functions and native UI cancellation passed.
+Toolchain alignment alone did **not** fix the remaining failure.
+
+The diagnostic ZIP was downloaded and verified against GitHub's SHA-256 digest
+`59d9e5efb7013934ce290783f3bbbff2c94fc1dc4a6343dcee6aec95c8b2e568`.
+Its daemon logs show a concrete timing failure in the accelerated fixture:
+
+- Retry transaction 7's failed renewal was processed at 15:26:18 UTC; its next
+  recorded deadline was 15:26:44.
+- Status synchronization began at 15:26:33 and completed at 15:27:36, over a
+  minute later and after the accelerated state window had elapsed.
+- In the grace case, transaction 9 expired at 15:28:06; renewal processing did
+  not begin until 15:28:31. The manager and native API both returned `expired`
+  at failure. Merely changing Xcode or lengthening the same accelerated wait
+  cannot keep an elapsed signed state valid.
+
+The billing test now uses the documented
+[`purchaseDate(_:renewalBehavior:)`](https://developer.apple.com/documentation/storekit/product/purchaseoption/purchasedate(_:renewalbehavior:))
+option with `SKTestSession.buyProduct` and `.realTime`. A backdated transaction
+expires about 30 seconds after fixture creation, while grace/retry keep their
+[real-time lifetimes](https://developer.apple.com/documentation/storekittest/sktestsession/timerate-swift.enum/realtime).
+The fixture verifies the signed transaction is from Xcode and expires imminently
+in the future. Calendar round trips select monthly or yearly to handle month-end
+anniversaries and leap years. Both products are already configured in the SDK.
+
+The test continues to require automatic SDK observation of the native failed
+renewal, the exact billing/grace status, a future verified grace deadline when
+enabled, and the same access assertions. The bounded wait is 150 seconds with a
+three-minute per-case limit, allowing the minute-long synchronization actually
+observed in CI. No refresh is called inside the event wait. The separate real
+SDK purchase test and all other tests remain enabled with their original checks.
+
+Targeted validation of both real-time parameters passed on local iPhone Duo /
+iOS 27.1 in 62.287 seconds before extending the wait to accommodate the measured
+remote synchronization delay. Full-suite validation with the 150-second event
+wait then passed **53/53 functions and 68/68 executions, 0 failed, 0 skipped**.
+Both renewal parameters passed, and actual cancellation UI passed in 16.453
+seconds. Result: `.build/validation/ci-real-time-renewal/FinalTests.xcresult`.
+
+The suite's inherited time limit is now three minutes so it cannot override the
+renewal wait with the previous two-minute limit. Swift Testing uses the shortest
+applicable limit. The final parameter rerun with that suite-level adjustment
+passed both cases in 60.364 seconds (`FinalRenewalTests.xcresult`).
+
+Failed Actions evidence is under `.build/validation/ci-run-40713829243/`;
+new local evidence is under `.build/validation/ci-real-time-renewal/`.
+
+# CI toolchain alignment — 2026-10-28 (historical)
 
 Status: **complete local CI script passed, 53/53 test functions; GitHub Actions
 verification pending**.

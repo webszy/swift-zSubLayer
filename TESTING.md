@@ -112,11 +112,21 @@ A generic Apple Account sign-in Cancel button cannot satisfy this query.
 When testing accelerated subscription expiry or billing failures, set
 `SKTestSession.timeRate` **before** purchasing. Changing it afterward does not
 retroactively shorten an existing transaction's signed expiration date.
-Billing retry/grace tests use `.oneRenewalEveryThirtySeconds`, which gives grace
-a 30-second lifetime. The fastest rate gives grace only two seconds, so a slow
-CI runner can miss that transient state. Tests still require the verified state,
-its future signed deadline and the corresponding access decision; on timeout,
-the failure includes both the manager state and native StoreKit renewal states.
+Billing retry/grace tests use `.realTime` and Apple's test-only `purchaseDate`
+option to create a verified transaction whose subscription expires in about
+30 seconds. That exercises a native failed renewal while preserving the real
+billing retry/grace lifetimes; accelerated time would shrink those state windows
+below observed CI delivery delays. The fixture requires a verified Xcode
+transaction with a future, imminent expiration before waiting for SDK access.
+It uses the monthly product when the calendar anniversary exists and yearly
+otherwise to handle month-end dates. The separate purchase test still requires
+the real SDK purchase to publish access immediately.
+
+Renewal delivery has a 150-second deadline and a three-minute per-case time
+limit. The test requires the same verified billing/grace state, its future signed
+deadline and the corresponding access decision. On timeout, the failure includes
+both manager state and native StoreKit renewal states. The wait never calls
+manager refresh to make the assertion pass.
 
 ## Manual checks
 
