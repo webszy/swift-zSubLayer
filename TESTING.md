@@ -99,6 +99,43 @@ retroactively shorten an existing transaction's signed expiration date.
 
 ## Execution evidence
 
+### 2026-10-28 regression checks — added, not executed
+
+The wrapper fixes retain the original remote StoreKitTheKit 1.5.4 dependency.
+No build or test run was performed for these changes. The earlier results in
+`VALIDATION.md` do not validate this revision.
+
+Run the existing DemoApp test scheme (Command-U) to include the new tests in
+`SubscriptionManagerTests.swift`:
+
+1. Hold a restore open, queue a purchase, cancel it, then release the restore.
+   Expect `CancellationError`, zero purchase calls and no `lastError`; a later
+   purchase must still work.
+2. Cancel while missing-product metadata is loading. Expect no store purchase.
+   With two callers sharing the same purchase, cancelling only one must preserve
+   the other caller's single purchase. Cancellation after store handoff must
+   still return the final payment result and reconcile access.
+3. Advance the test clock across active and grace deadlines without delivering
+   the timer. `hasActiveEntitlement(for:)` must immediately return false for the
+   expired product while another valid product remains accessible. The old
+   published snapshot intentionally remains compatible and may still be stale.
+4. The injected vendor purchase first returns `productNotFound`, then succeeds
+   after synchronization. Expect exactly one sync and two attempts. If the
+   product remains missing, expect a surfaced error after the second attempt.
+   Success, cancellation, pending approval and verification failure must not retry.
+
+These vendor-call injections verify wrapper control flow, not live App Store
+cache behavior. Manually check a partial product catalog that later becomes
+available, and confirm the newly displayed product can be purchased. Concurrent
+upstream background synchronization may still cause a transient unavailable
+error because the unmodified vendor API does not join an in-flight sync.
+
+The upstream listener's finishing of unrelated products is deliberately **not
+fixed**, per the decision to retain the original remote dependency. No test or
+release claim should imply safe isolation from another consumable-delivery flow.
+
+### Earlier execution evidence
+
 Results from this session are recorded in `VALIDATION.md`, including failed
 attempts and environment limitations. No real App Store Sandbox or production
 purchase validation is claimed.

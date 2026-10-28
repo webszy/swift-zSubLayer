@@ -47,6 +47,7 @@ final class FakeSubscriptionStore: SubscriptionStore {
     var purchaseGate: TestGate?
     var restoreGate: TestGate?
     var snapshotGate: TestGate?
+    var fetchGate: TestGate?
     var onRead: (@MainActor () -> Void)?
     private(set) var startCalls = 0
     private(set) var fetchCalls = 0
@@ -65,6 +66,7 @@ final class FakeSubscriptionStore: SubscriptionStore {
     func fetchProducts(productIDs: [String]) async throws -> [SubscriptionProduct] {
         enter(); defer { leave() }
         fetchCalls += 1
+        await fetchGate?.wait()
         if let productError { throw productError }
         return productIDs.filter { availableIDs.contains($0) }.map {
             .init(id: $0, displayName: $0, productDescription: "Test subscription",

@@ -10,6 +10,7 @@ public final class SubscriptionManager: ObservableObject {
 
     @Published public private(set) var products: [SubscriptionProduct] = []
     @Published public private(set) var subscriptionStatus: SubscriptionStatus = .unknown
+    /// Last published snapshot for observation. Use hasActiveEntitlement(for:) to authorize access.
     @Published public private(set) var activeEntitlements: Set<String> = []
     @Published public private(set) var isLoading = false
     @Published public private(set) var isReady = false
@@ -17,6 +18,10 @@ public final class SubscriptionManager: ObservableObject {
 
     /// Checks the verified expiry even if a suspended app hasn't delivered its expiry timer yet.
     public var isPremium: Bool { !AccessSnapshot.evaluate(entitlements, at: now()).ids.isEmpty }
+    /// Checks the signed deadline at the time of use, even before foreground/timer delivery.
+    public func hasActiveEntitlement(for productID: String) -> Bool {
+        AccessSnapshot.evaluate(entitlements, at: now()).ids.contains(productID)
+    }
     public private(set) var productIDs: [String] = []
 
     private let adapter: any SubscriptionStore
@@ -25,7 +30,11 @@ public final class SubscriptionManager: ObservableObject {
     private var startTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Error>?
     private var operationTail: Task<Void, Never>?
-    private var purchases: [String: Task<PurchaseResult, Error>] = [:]
+    private struct PendingPurchase {
+        let task: Task<PurchaseResult, Error>
+        let demand: PurchaseDemand
+    }
+    private var purchases: [String: PendingPurchase] = [:]
     private var expiryTask: Task<Void, Never>?
     private var pendingOperations = 0
     private var changeGeneration: UInt64 = 0
@@ -108,23 +117,39 @@ public final class SubscriptionManager: ObservableObject {
         try Task.checkCancellation()
         try await start()
         try Task.checkCancellation()
-        if let purchase = purchases[productID] { return try await purchase.value }
-        let task = Task { [self] in
-            try await performOperation {
-                if !self.products.contains(where: { $0.id == productID }) {
-                    self.products = try await self.adapter.fetchProducts(productIDs: self.productIDs)
+        let callerID = UUID()
+        let pending: PendingPurchase
+        if let existing = purchases[productID] {
+            pending = existing
+        } else {
+            let demand = PurchaseDemand()
+            let task = Task { [self] in
+                defer { purchases[productID] = nil }
+                return try await performOperation {
+                    try demand.checkCancellation()
+                    if !self.products.contains(where: { $0.id == productID }) {
+                        self.products = try await self.adapter.fetchProducts(productIDs: self.productIDs)
+                    }
+                    try demand.checkCancellation()
+                    guard self.products.contains(where: { $0.id == productID }) else {
+                        throw SubscriptionError.productUnavailable(productID)
+                    }
+                    // Once handed to StoreKit, cancellation cannot roll back a payment.
+                    let result = try await self.adapter.purchase(productID: productID)
+                    if case .purchased = result { await self.reconcileEntitlements() }
+                    return result
                 }
-                guard self.products.contains(where: { $0.id == productID }) else {
-                    throw SubscriptionError.productUnavailable(productID)
-                }
-                let result = try await self.adapter.purchase(productID: productID)
-                if case .purchased = result { await self.reconcileEntitlements() }
-                return result
             }
+            pending = PendingPurchase(task: task, demand: demand)
+            purchases[productID] = pending
         }
-        purchases[productID] = task
-        defer { purchases[productID] = nil }
-        return try await task.value
+        let demand = pending.demand
+        demand.add(callerID)
+        return try await withTaskCancellationHandler {
+            try await pending.task.value
+        } onCancel: {
+            demand.remove(callerID)
+        }
     }
 
     /// Uses AppStore.sync; errors reach both the caller and lastError.
@@ -222,7 +247,10 @@ public final class SubscriptionManager: ObservableObject {
             await previous?.value
             lastError = nil
             do { return try await operation() }
-            catch { lastError = error.localizedDescription; throw error }
+            catch {
+                if !(error is CancellationError) { lastError = error.localizedDescription }
+                throw error
+            }
         }
         operationTail = Task { _ = try? await task.value }
         defer { endOperation() }
@@ -234,5 +262,26 @@ public final class SubscriptionManager: ObservableObject {
     private func record(_ error: SubscriptionError) -> SubscriptionError {
         lastError = error.localizedDescription
         return error
+    }
+}
+
+/// Cancellation handlers can run off MainActor. All mutable state is protected by this lock.
+private final class PurchaseDemand: @unchecked Sendable {
+    private let lock = NSLock()
+    private var callers: Set<UUID> = []
+
+    func add(_ id: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        callers.insert(id)
+    }
+
+    func remove(_ id: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        callers.remove(id)
+    }
+
+    func checkCancellation() throws {
+        lock.lock(); defer { lock.unlock() }
+        if callers.isEmpty { throw CancellationError() }
     }
 }

@@ -316,6 +316,113 @@ struct SubscriptionManagerTests {
         #expect(store.purchasedIDs.isEmpty)
     }
 
+    @Test func cancelledQueuedPurchaseNeverReachesTheStore() async throws {
+        let manager = manager()
+        manager.configure(productIDs: ["monthly"])
+        try await manager.start()
+        let restoreGate = TestGate()
+        store.restoreGate = restoreGate
+        let restore = Task { try await manager.restore() }
+        await restoreGate.waitUntilEntered()
+
+        let queued = TestGate()
+        var loadingPublications = 0
+        let token = manager.$isLoading.sink { loading in
+            if loading {
+                loadingPublications += 1
+                // Initial emission is the restore; the next one is the queued purchase.
+                if loadingPublications == 2 { queued.open() }
+            }
+        }
+        let purchase = Task { try await manager.purchase() }
+        await queued.wait()
+        purchase.cancel()
+        restoreGate.open()
+        try await restore.value
+        await #expect(throws: CancellationError.self) { try await purchase.value }
+        #expect(store.purchasedIDs.isEmpty)
+        #expect(!manager.isLoading && manager.lastError == nil)
+        withExtendedLifetime(token) {}
+
+        // Cancellation must not poison the per-product slot or the operation queue.
+        #expect(try await manager.purchase() == .cancelled)
+        #expect(store.purchasedIDs == ["monthly"])
+    }
+
+    @Test func cancellationDuringMetadataLoadingPreventsPayment() async throws {
+        let manager = manager()
+        store.availableIDs = []
+        manager.configure(productIDs: ["monthly"])
+        try await manager.start()
+        store.availableIDs = ["monthly"]
+        let gate = TestGate()
+        store.fetchGate = gate
+        let purchase = Task { try await manager.purchase() }
+        await gate.waitUntilEntered()
+        purchase.cancel()
+        gate.open()
+        await #expect(throws: CancellationError.self) { try await purchase.value }
+        #expect(store.purchasedIDs.isEmpty && manager.lastError == nil)
+    }
+
+    @Test func cancellingOneWaiterPreservesAnotherCallersPurchase() async throws {
+        let manager = manager()
+        store.availableIDs = []
+        manager.configure(productIDs: ["monthly"])
+        try await manager.start()
+        store.availableIDs = ["monthly"]
+        store.outcome = .success(.purchased(productID: "monthly"))
+        store.afterPurchase = [active()]
+        let gate = TestGate()
+        store.fetchGate = gate
+        let first = Task { try await manager.purchase() }
+        await gate.waitUntilEntered()
+        let secondEntered = TestGate()
+        let second = Task { secondEntered.open(); return try await manager.purchase() }
+        await secondEntered.wait()
+        first.cancel()
+        gate.open()
+        #expect(try await second.value == .purchased(productID: "monthly"))
+        #expect(try await first.value == .purchased(productID: "monthly"))
+        #expect(store.purchasedIDs == ["monthly"] && manager.isPremium)
+    }
+
+    @Test func cancellationAfterStoreHandoffPreservesThePaymentResult() async throws {
+        let manager = manager()
+        manager.configure(productIDs: ["monthly"])
+        try await manager.start()
+        let gate = TestGate()
+        store.purchaseGate = gate
+        store.outcome = .success(.purchased(productID: "monthly"))
+        store.afterPurchase = [active()]
+        let purchase = Task { try await manager.purchase() }
+        await gate.waitUntilEntered()
+        purchase.cancel()
+        gate.open()
+        #expect(try await purchase.value == .purchased(productID: "monthly"))
+        #expect(manager.hasActiveEntitlement(for: "monthly"))
+    }
+
+    @Test(arguments: [SubscriptionEntitlement.State.active, .gracePeriod])
+    func perProductAccessExpiresBeforeSnapshotDelivery(state: SubscriptionEntitlement.State) async throws {
+        let manager = manager()
+        let deadline = clock.date.addingTimeInterval(10)
+        store.records = [
+            .init(productID: "monthly", state: state,
+                  expirationDate: deadline, gracePeriodExpirationDate: deadline),
+            active("yearly", seconds: 100)
+        ]
+        manager.configure(productIDs: ["monthly", "yearly"])
+        try await manager.start()
+        #expect(manager.hasActiveEntitlement(for: "monthly"))
+        #expect(!manager.hasActiveEntitlement(for: "unconfigured"))
+        clock.date = deadline
+        // Do not refresh or revalidate: model a suspended expiry timer.
+        #expect(manager.activeEntitlements.contains("monthly"))
+        #expect(!manager.hasActiveEntitlement(for: "monthly"))
+        #expect(manager.hasActiveEntitlement(for: "yearly") && manager.isPremium)
+    }
+
     @Test func entitlementPublishingStaysOnMainActor() async throws {
         let manager = manager()
         var publications = 0
@@ -328,5 +435,62 @@ struct SubscriptionManagerTests {
         try await manager.start()
         #expect(publications >= 2)
         withExtendedLifetime(token) {}
+    }
+}
+
+@MainActor
+struct StoreKitPurchaseRecoveryTests {
+    @Test func missingVendorProductSynchronizesAndRetriesOnce() async throws {
+        var attempts = 0
+        var syncs = 0
+        let adapter = StoreKitAdapter(purchaseElement: { item in
+            attempts += 1
+            if syncs == 0 { return .purchaseFailure(.productNotFound) }
+            return .purchaseCompleted(item)
+        }, synchronizeProducts: { syncs += 1 })
+        #expect(try await adapter.purchase(productID: "monthly") == .purchased(productID: "monthly"))
+        #expect(attempts == 2 && syncs == 1)
+    }
+
+    @Test func missingProductAfterSyncFailsWithoutRetryLoop() async {
+        var attempts = 0
+        var syncs = 0
+        let adapter = StoreKitAdapter(purchaseElement: { _ in
+            attempts += 1
+            return .purchaseFailure(.productNotFound)
+        }, synchronizeProducts: { syncs += 1 })
+        await #expect(throws: SubscriptionError.productUnavailable("monthly")) {
+            try await adapter.purchase(productID: "monthly")
+        }
+        #expect(attempts == 2 && syncs == 1)
+    }
+
+    @Test(arguments: [PurchaseResult.cancelled, .pending, .purchased(productID: "monthly")])
+    func completedStoreOutcomesAreNeverRetried(result: PurchaseResult) async throws {
+        var attempts = 0
+        var syncs = 0
+        let adapter = StoreKitAdapter(purchaseElement: { item in
+            attempts += 1
+            switch result {
+            case .cancelled: return .purchaseFailure(.userCancelled)
+            case .pending: return .purchaseFailure(.pendingPurchase)
+            case .purchased: return .purchaseCompleted(item)
+            }
+        }, synchronizeProducts: { syncs += 1 })
+        #expect(try await adapter.purchase(productID: "monthly") == result)
+        #expect(attempts == 1 && syncs == 0)
+    }
+
+    @Test func verificationFailureIsNeverRetried() async {
+        var attempts = 0
+        var syncs = 0
+        let adapter = StoreKitAdapter(purchaseElement: { _ in
+            attempts += 1
+            return .purchaseFailure(.unverifiedPurchase)
+        }, synchronizeProducts: { syncs += 1 })
+        await #expect(throws: SubscriptionError.verificationFailed) {
+            try await adapter.purchase(productID: "monthly")
+        }
+        #expect(attempts == 1 && syncs == 0)
     }
 }

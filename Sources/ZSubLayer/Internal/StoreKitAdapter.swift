@@ -9,6 +9,8 @@ final class StoreKitAdapter: SubscriptionStore {
     var onChange: (@MainActor @Sendable () -> Void)?
 
     private let store = StoreKitTheKit.shared
+    private let purchaseElement: @MainActor (Purchasable) async -> PurchaseState
+    private let synchronizeProducts: @MainActor () async -> Void
     private let networkMonitor = NWPathMonitor()
     private var startupTask: Task<Void, Never>?
     private var transactionTask: Task<Void, Never>?
@@ -17,6 +19,19 @@ final class StoreKitAdapter: SubscriptionStore {
     private var configuredIDs: Set<String> = []
     private var wasOnline = false
     private var verifiedGrace: [UInt64: SubscriptionEntitlement] = [:]
+
+    // Internal injection exercises the vendor-cache recovery path without starting a payment.
+    init(
+        purchaseElement: @escaping @MainActor (Purchasable) async -> PurchaseState = {
+            await StoreKitTheKit.shared.purchaseElement(element: $0)
+        },
+        synchronizeProducts: @escaping @MainActor () async -> Void = {
+            await StoreKitTheKit.shared.syncWithStore()
+        }
+    ) {
+        self.purchaseElement = purchaseElement
+        self.synchronizeProducts = synchronizeProducts
+    }
 
     deinit {
         transactionTask?.cancel()
@@ -70,7 +85,14 @@ final class StoreKitAdapter: SubscriptionStore {
 
     func purchase(productID: String) async throws -> PurchaseResult {
         let item = Purchasable(bundleId: productID, type: .autoRenewableSubscription)
-        switch await store.purchaseElement(element: item) {
+        var outcome = await purchaseElement(item)
+        // Our display metadata can contain a product missing from the vendor's partial cache.
+        // productNotFound occurs before Product.purchase(), so only this outcome is safe to retry.
+        if case .purchaseFailure(.productNotFound) = outcome {
+            await synchronizeProducts()
+            outcome = await purchaseElement(item)
+        }
+        switch outcome {
         case .purchaseCompleted(let purchased):
             return .purchased(productID: purchased.bundleId)
         case .purchaseFailure(let error):
