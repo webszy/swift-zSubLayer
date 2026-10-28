@@ -2,8 +2,13 @@
 
 The local Demo uses `Examples/DemoApp/Subscriptions.storekit`. It contains
 `com.example.zsublayer.monthly` and `com.example.zsublayer.yearly`, in one
-subscription group. The shared Scheme loads the file; automated tests install
-an `SKTestSession` before constructing the SDK singleton. No Apple ID,
+subscription group. The shared Scheme loads the file. In Debug, an automated
+test host installs and retains `SKTestSession` during `DemoApp.init`, before the
+SDK or its StoreKit clients start. Unit/integration hosts use the scheme's
+`ZSUBLAYER_TESTING=1`. The UI test creates its session in the XCTest runner and
+launches the standalone paywall with `ZSUBLAYER_TESTING=0`, keeping dialogs enabled.
+StoreKitTest session creation requires the XCTest runtime and must not run in
+the standalone UI application. Test methods reset the environment for each scenario. No Apple ID,
 Sandbox account, App Store Connect connection or real payment is required.
 
 The library remains an independent iOS 15 Swift Package. The separate test host
@@ -97,12 +102,20 @@ The UI automation uses XCTest/XCUITest, which is required to control iOS system
 purchase UI; unit and StoreKit integration tests use Swift Testing. An injected
 `.userCancelled` can arrive as `.unknown` from the tested local StoreKit service.
 That injection check accepts cancellation or a propagated `purchaseFailed` error,
-and always requires no access. The separate UI test requires the actual
-`.cancelled` outcome after tapping the confirmation sheet's Cancel control.
+and always requires no access. The separate UI test locates the close/Cancel
+control inside the local sheet's `Xcode` navigation bar, including SpringBoard's
+`dismiss` identifier and lowercase `close` label. It requires the actual
+`.cancelled` outcome after tapping it, with no entitlement or transaction.
+A generic Apple Account sign-in Cancel button cannot satisfy this query.
 
 When testing accelerated subscription expiry or billing failures, set
 `SKTestSession.timeRate` **before** purchasing. Changing it afterward does not
 retroactively shorten an existing transaction's signed expiration date.
+Billing retry/grace tests use `.oneRenewalEveryThirtySeconds`, which gives grace
+a 30-second lifetime. The fastest rate gives grace only two seconds, so a slow
+CI runner can miss that transient state. Tests still require the verified state,
+its future signed deadline and the corresponding access decision; on timeout,
+the failure includes both the manager state and native StoreKit renewal states.
 
 ## Manual checks
 

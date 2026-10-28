@@ -1,4 +1,108 @@
-# CI destination discovery follow-up — 2026-10-28
+# StoreKit CI failure follow-up — 2026-10-28
+
+Status: **all 53 test functions pass locally; new GitHub Actions execution
+still required**.
+The SDK sources, public APIs, dependency pin and access assertions are unchanged.
+
+## Evidence from the latest failed run
+
+Inspected the job log, downloaded the 55 MB diagnostic artifact and exported
+the complete xcresult diagnostics and UI attachments from
+[run 40674183931](https://github.com/webszy/swift-zSubLayer/actions/runs/40674183931),
+commit `c11b70fa917bd473945df11c5102610fae6a3c55`.
+
+- Xcode 27.0 selected iPhone 17 / iOS 27.0, booted it, resolved the explicit
+  destination and built DemoApp successfully. The destination-discovery repair
+  worked. All 42 unit-test functions passed.
+- The result bundle reports **50 passed, 3 failed, 0 skipped** test functions
+  (**65 passed, 3 failed** device executions including parameters). The failures
+  are the first SDK purchase, grace-period renewal, and native UI cancellation.
+- The first purchase's StoreKit request `5093008D_SK2` started Sandbox
+  authentication with no active account at 10:49:04 UTC. It remained blocked
+  until the UI runner dismissed its Apple Account alert at 10:53:38 UTC, after
+  the integration test's 120-second timeout and host restart. Other requests
+  already used XcodeTest. This establishes a mixed test environment at startup,
+  not an SDK purchase error or a missing-product failure.
+- The UI screenshot **does show the local Xcode payment sheet**. SpringBoard's
+  exported hierarchy contains `NavigationBar identifier: 'Xcode'` and its
+  `Button identifier: 'dismiss', label: 'close'`. The old case-sensitive query
+  accepted `Close`, not `close`, so it missed the real cancellation control.
+  The earlier Apple Account alert was a leftover from the timed-out purchase;
+  it does not mean that the UI test's purchase used the live App Store.
+- Billing retry without grace passed; grace timed out. The test used
+  `.oneRenewalEveryTwoSeconds`, whose grace window is also only two seconds.
+  The daemon did not process renewal until 10:52:28, after the recorded next
+  renewal deadline of 10:52:27. This supports a missed transient grace window;
+  the old logs do not expose the signed grace payload, so they cannot prove
+  that timing is the only cause.
+
+Apple documents the [two-second grace window](https://developer.apple.com/documentation/storekittest/sktestsession/timerate-swift.enum/onerenewaleverytwoseconds)
+and the [30-second alternative](https://developer.apple.com/documentation/storekittest/sktestsession/timerate-swift.enum/onerenewaleverythirtyseconds).
+Their [test-session documentation](https://developer.apple.com/documentation/storekittest/sktestsession)
+also requires serial execution because sessions share one environment.
+
+## Corrections under validation
+
+The Debug Demo test host installs and retains a local `SKTestSession` in app
+initialization before any SDK startup. Test methods still reset their scenarios.
+Unit/integration launches suppress dialogs. The UI runner owns a separate test
+session with dialogs enabled; its standalone paywall app does not create one.
+`ENABLE_TESTING_SEARCH_PATHS` is enabled only for the app's Debug configuration;
+the StoreKitTest import and bootstrap are excluded from Release.
+
+The UI query uses the observed `dismiss` identifier and case-insensitive
+close/Cancel labels **inside the Xcode navigation bar**. A generic login-alert
+Cancel cannot satisfy it. It still requires `.cancelled`, no premium access and
+an empty local transaction history. Failure attachments include all three UI
+process hierarchies.
+
+The billing test now gives renewal and grace 30 seconds each, with a 75-second
+bounded event wait. Access assertions and the future verified grace deadline
+remain required. A timeout additionally reports manager and native StoreKit
+renewal states, without refreshing the manager to manufacture a pass.
+
+## Local validation
+
+- Resolved the unchanged StoreKitTheKit 1.5.4 dependency using its committed lock.
+- Initial Debug build failed to locate StoreKitTest from the app target. Adding
+  Debug-only testing search paths corrected that build configuration.
+- `build-for-testing`: **passed** for DemoApp and all three test targets with
+  Swift 6 checking. Apple framework deprecation and unused AppIntents metadata
+  warnings remain; there are no compilation errors.
+- The first local run passed all 42 unit and 10 integration functions, including
+  the first purchase in 0.219 seconds and both retry/grace parameters. The UI app
+  then crashed because the initial bootstrap also ran in the standalone UI
+  application. Its crash stack identifies `SKTestSession.bundleID` requiring
+  XCTest configuration. Bootstrap is now limited to hosted XCTest launches;
+  the UI runner alone creates its test session. That failed bundle is retained.
+- Final full `xcodebuild test`: **53 passed, 0 failed, 0 skipped, 0 expected
+  failures**, comprising all 42 unit functions, 10 integration functions and the
+  native UI test. Including parameterized cases: **68 passed** device executions.
+  The first purchase, both retry/grace cases, product-error recovery and native
+  cancellation all passed. The UI test located the actual local sheet, dismissed
+  it and verified `.cancelled`, no entitlement and no local transaction (16.037
+  seconds). The first run's UI startup failure is not counted as a pass.
+- Local toolchain is **Xcode 27.1 (`27A9275`), Simulator SDK 27.1**, not the
+  runner's Xcode/SDK 27.0. Runtime testing targets an unused iPhone 17 / iOS 27.0
+  (`7130543B-6610-45F6-B185-4DCDABBB144F`). Local success alone cannot validate
+  the exact CI toolchain.
+- `plutil -lint` for the project and `git diff --check`: passed.
+
+Downloaded evidence is under `.build/validation/ci-run-40674183931/`, including
+`storekit-system.log`, `test-diagnostics/`, `ui-attachments/` and the original
+`Tests.xcresult`. New compilation/test logs, the failed `Tests.xcresult`, passing
+`FinalTests.xcresult`, `final-summary.json` and `final-tests.json` are under
+`.build/validation/storekit-ci-followup/`.
+
+## CI acceptance
+
+Run the unchanged workflow against this revision and require all **53** test
+functions to pass on Xcode 27.0 / iOS 27.0, with no skips or expected failures.
+In particular the first SDK purchase must complete without account login or
+host restart, both retry/grace parameters must pass, and native sheet dismissal
+must return `.cancelled`. The earlier failed run is preserved as evidence.
+
+# CI destination discovery follow-up — 2026-10-28 (historical)
 
 Status: **local regression checks passed; a new GitHub Actions run is still
 required**. This follow-up has not been compiled, run on a Simulator, committed

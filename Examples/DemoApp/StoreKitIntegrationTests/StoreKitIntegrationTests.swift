@@ -139,14 +139,25 @@ struct StoreKitIntegrationTests {
         defer { session.clearTransactions(); session.resetToDefaultState() }
         session.shouldEnterBillingRetryOnRenewal = true
         session.billingGracePeriodIsEnabled = grace
-        // Existing transactions retain their original deadline when timeRate changes.
-        session.timeRate = .oneRenewalEveryTwoSeconds
+        // At the fastest rate grace lasts only two seconds and can expire before
+        // a busy CI runner delivers the renewal status. Keep a 30-second window.
+        // Set the rate before purchase: existing transactions retain their deadline.
+        session.timeRate = .oneRenewalEveryThirtySeconds
         _ = try await manager.purchase(Self.monthly)
-        try await waitFor(timeout: 45) {
-            if grace {
-                if case .gracePeriod = manager.subscriptionStatus { return manager.isPremium }
-            } else if manager.subscriptionStatus == .billingRetry { return !manager.isPremium }
-            return false
+        do {
+            try await waitFor(timeout: 75) {
+                if grace {
+                    if case .gracePeriod = manager.subscriptionStatus { return manager.isPremium }
+                } else if manager.subscriptionStatus == .billingRetry { return !manager.isPremium }
+                return false
+            }
+        } catch StoreKitWaitError.timeout {
+            let product = try await Product.products(for: [Self.monthly]).first
+            let statuses = try await product?.subscription?.status ?? []
+            throw StoreKitWaitError.renewalTimeout(
+                grace: grace, manager: String(describing: manager.subscriptionStatus),
+                store: statuses.map { String(describing: $0.state) }
+            )
         }
         if grace {
             guard case .gracePeriod(let expiry) = manager.subscriptionStatus else {
@@ -183,4 +194,7 @@ struct StoreKitIntegrationTests {
 }
 
 private final class BundleMarker: NSObject {}
-private enum StoreKitWaitError: Error { case timeout }
+private enum StoreKitWaitError: Error {
+    case timeout
+    case renewalTimeout(grace: Bool, manager: String, store: [String])
+}

@@ -1,10 +1,32 @@
 import SwiftUI
 import ZSubLayer
+#if DEBUG
+import StoreKitTest
+#endif
 
 @main
 @MainActor
 struct DemoApp: App {
+    #if DEBUG
+    // Hosted tests install the local configuration before their first StoreKit request.
+    // UI tests own their session in the XCTest runner, not in the standalone app.
+    private let storeKitTestSession: SKTestSession?
+    #endif
+
     init() {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["ZSUBLAYER_TESTING"] == "1" {
+            do {
+                let session = try SKTestSession(configurationFileNamed: "Subscriptions")
+                session.disableDialogs = true
+                storeKitTestSession = session
+            } catch {
+                fatalError("Unable to initialize local StoreKit test host: \(error)")
+            }
+        } else {
+            storeKitTestSession = nil
+        }
+        #endif
         if ProcessInfo.processInfo.environment["ZSUBLAYER_TESTING"] != "1" {
             SubscriptionManager.shared.configure(productIDs: [
                 "com.example.zsublayer.monthly", "com.example.zsublayer.yearly"
@@ -15,7 +37,7 @@ struct DemoApp: App {
     var body: some Scene {
         WindowGroup {
             if ProcessInfo.processInfo.environment["ZSUBLAYER_TESTING"] == "1" {
-                // Tests install SKTestSession before constructing the SDK singleton.
+                // The host establishes StoreKit Test before the tests configure the SDK.
                 Text("Running local subscription tests")
             } else {
                 SubscriptionScreen()
