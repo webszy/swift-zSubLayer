@@ -42,15 +42,16 @@ Artifacts go to `.build/validation/<timestamp>-<pid>/`, printed even on failure.
 
 To select a specific installed toolchain or simulator, set `DEVELOPER_DIR` or
 `ZSUBLAYER_SIMULATOR_ID`; explicit simulator IDs undergo the same compatibility
-checks. `ZSUBLAYER_EXPECTED_XCODE_VERSION=27.0` rejects another Xcode version.
+checks. `ZSUBLAYER_EXPECTED_XCODE_VERSION=27.1` rejects another Xcode version.
 In an environment that prohibits nested SwiftPM
 sandboxing, `ZSUBLAYER_DISABLE_SPM_SANDBOX=1` disables SwiftPM's nested sandbox
 only; OS/tool permission restrictions still apply.
 
 ### GitHub Actions
 
-CI uses `xcode-27` and `/Applications/Xcode_27.app/Contents/Developer`, with an
-exact Xcode 27.0 version check. The workflow prints Xcode, Swift, Simulator SDK,
+CI uses `xcode-27` and `/Applications/Xcode_27.1.app/Contents/Developer`, with an
+exact Xcode 27.1 version check. This matches the locally validated toolchain.
+The workflow prints Xcode, Swift, Simulator SDK,
 installed runtimes and available devices. The shared `DemoApp` scheme runs
 `ZSubLayerUnitTests`, `StoreKitIntegrationTests` and `DemoAppUITests` without
 parallel testing, filtering or retries that could hide a failing test.

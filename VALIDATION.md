@@ -1,4 +1,59 @@
-# StoreKit CI failure follow-up — 2026-10-28
+# CI toolchain alignment — 2026-10-28
+
+Status: **complete local CI script passed, 53/53 test functions; GitHub Actions
+verification pending**.
+
+Inspected the complete log and xcresult from
+[run 40707505016](https://github.com/webszy/swift-zSubLayer/actions/runs/40707505016)
+for commit `83dd4c61ab47831d515f85998adcb6baac8f737f`. The downloaded 46 MB
+diagnostic ZIP matches GitHub's SHA-256 digest
+`aee114fe5351e15993ca40a99563cd4a6467eca51d9371b584ec1bd6be7db99e`.
+
+- Result: **52 passed, 1 failed, 0 skipped** test functions. The single failing
+  function has two failed parameter cases: billing retry with and without grace.
+- All 42 unit functions, first purchase, the other StoreKit integration cases
+  and genuine native UI cancellation passed. The previous initialization and
+  cancellation-control changes are now verified on GitHub Actions.
+- Both renewal cases timed out after the 75-second bounded event wait. At the
+  failure, both the wrapper and native StoreKit returned `expired` (native state
+  raw value 2). This is evidence about the native test environment, not a reason
+  to grant access from an expired entitlement or to relax the expected states.
+- Offline daemon logs show renewal and synchronization delays. In the retry
+  case, transaction 7's deadline was 14:46:40 UTC, while renewal processing began
+  at 14:47:09. In the grace case, native status synchronization began at
+  14:48:10 and completed at 14:48:48, after the recorded 14:48:27 deadline.
+  A larger wait alone does not preserve an already elapsed state window.
+- CI still used **Xcode 27.0 (`27A266a`) / SDK 27.0**. The passing local results
+  used **Xcode 27.1 (`27A9275`) / SDK 27.1**. Those were different toolchains.
+
+The workflow now explicitly selects Xcode 27.1 and keeps an exact 27.1 guard.
+GitHub's [xcode-27 runner inventory](https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md)
+lists that version at `/Applications/Xcode_27.1.app`, with SDK/runtime 27.1.
+The complete existing CI script passed locally with that version guard, fresh
+dependency/build directories and automatic compatible-runtime selection:
+
+- Xcode 27.1 (`27A9275`), SDK 27.1, iPhone Duo / iOS 27.1 (`24A94425`).
+- Both lockfile-constrained resolvers, package manifest validation, explicit
+  Simulator boot/destination validation and DemoApp build passed.
+- All **53 test functions passed**, including 42 unit functions, 10 integration
+  functions and native cancellation UI. Including parameters: **68 successful
+  device executions, 0 failed, 0 skipped, 0 expected failures**.
+- Both billing retry/grace parameters passed together in 60.856 seconds; native
+  UI cancellation passed in 17.244 seconds. The script exited 0.
+- Workflow YAML parsing, exact toolchain guard and `git diff --check` passed.
+
+SDK code, test cases, assertions, timeouts and the dependency pin are unchanged
+in this follow-up. A new passing Actions run is required to establish whether
+aligning the toolchain resolves the remaining failure; this record does not
+attribute a specific unconfirmed defect to Apple.
+
+Evidence from the failed run is under
+`.build/validation/ci-run-40707505016/`, including `summary.json`, exported test
+diagnostics and `storekit-system.log`. New script output is under
+`.build/validation/ci-toolchain-27.1/`, including `local-summary.json`. The full
+local result bundle is `.build/validation/20261028-230845-3260/Tests.xcresult`.
+
+# StoreKit CI failure follow-up — 2026-10-28 (historical)
 
 Status: **all 53 test functions pass locally; new GitHub Actions execution
 still required**.
