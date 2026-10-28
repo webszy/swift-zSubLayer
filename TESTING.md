@@ -18,16 +18,45 @@ From the package directory:
 bash scripts/test-ios.sh
 ```
 
-The script selects an installed Xcode and available iPhone simulator, preferring
-an already booted device. It runs `swift package resolve`,
-`swift package dump-package`, `xcodebuild build` and `xcodebuild test`. A failed
-command makes the script fail. It never filters failing tests or marks them as
-expected failures. Artifacts go to `.build/validation/<timestamp>/`.
+The script selects an installed Xcode and an available iPhone simulator listed
+as an eligible DemoApp destination. Its runtime must be iOS 17+ and no newer
+than the selected Xcode's Simulator SDK major/minor version. It prefers the
+newest compatible runtime, then an already booted device, and waits for boot.
+It runs `swift package resolve`, `swift package dump-package`, an explicit
+`xcodebuild -resolvePackageDependencies`, `xcodebuild build` and `xcodebuild test`.
+Both resolvers use committed versions; Xcode populates a separate fresh package
+directory shared by resolution, build and test. A failed command makes the script
+fail. It never filters failing tests or marks them as expected failures.
+Artifacts go to `.build/validation/<timestamp>-<pid>/`, printed even on failure.
 
 To select a specific installed toolchain or simulator, set `DEVELOPER_DIR` or
-`ZSUBLAYER_SIMULATOR_ID`. In an environment that prohibits nested SwiftPM
+`ZSUBLAYER_SIMULATOR_ID`; explicit simulator IDs undergo the same compatibility
+checks. `ZSUBLAYER_EXPECTED_XCODE_VERSION=27.0` rejects another Xcode version.
+In an environment that prohibits nested SwiftPM
 sandboxing, `ZSUBLAYER_DISABLE_SPM_SANDBOX=1` disables SwiftPM's nested sandbox
 only; OS/tool permission restrictions still apply.
+
+### GitHub Actions
+
+CI uses `xcode-27` and `/Applications/Xcode_27.app/Contents/Developer`, with an
+exact Xcode 27.0 version check. The workflow prints Xcode, Swift, Simulator SDK,
+installed runtimes and available devices. The shared `DemoApp` scheme runs
+`ZSubLayerUnitTests`, `StoreKitIntegrationTests` and `DemoAppUITests` without
+parallel testing, filtering or retries that could hide a failing test.
+
+After committing and pushing the reviewed changes, open Actions → Swift Package
+CI and inspect the run for that commit (or use Run workflow). Require successful
+dependency resolution, `BUILD SUCCEEDED` and `TEST SUCCEEDED`, with all three
+test targets present and passing in `Tests.xcresult`. Only a fully passing
+GitHub Actions run validates the CI repair.
+
+The `Upload CI diagnostics` step runs even after failures. Download
+`zsublayer-ci-diagnostics` from the run's Artifacts section within five days.
+It includes `toolchain.log`, `resolve.log`, `build.log`, `test.log`, simulator
+selection/boot diagnostics, destination inventory and the complete
+`Tests.xcresult` directory when produced. Open that directory with Xcode to
+inspect test failures and UI attachments. Phases not reached have an explicit
+"Phase not started" log; `Tests.xcresult` exists only once testing starts.
 
 The equivalent Xcode workflow is:
 

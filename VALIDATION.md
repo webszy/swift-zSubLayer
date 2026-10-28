@@ -1,4 +1,69 @@
-# Validation record — 2026-10-27
+# CI repair validation — 2026-10-28
+
+Status: **local CI configuration/script checks passed; repaired GitHub Actions
+run not executed or verified**. No commit or push was made. The prior simulator
+results below do not validate this revision.
+
+## Failed CI evidence
+
+Inspected the complete job log for
+[run 40660474366](https://github.com/webszy/swift-zSubLayer/actions/runs/40660474366),
+commit `3c7c7ad7d4c1fd2d16912ba320a77423b1482acb`:
+
+- Runner: `macos-15-arm64`; Xcode 16.4 (`16F6`), Swift 6.1.2, iOS Simulator SDK
+  18.5. The old selector chose iPhone 17 Pro / iOS 26.2. That runtime is newer
+  than the selected toolchain's SDK, despite appearing in its destination list.
+- StoreKitTheKit 1.5.4 resolved and DemoApp reported `BUILD SUCCEEDED`.
+  The unit-test run reported 42 tests passed.
+- StoreKit integration failed: both billing-retry/grace cases timed out;
+  `metadataNetworkFailureRecoversWithoutLosingPaidAccess` failed its expected
+  error and preserved-product assertions. The native cancellation UI test failed
+  because the local confirmation did not appear. `xcodebuild test` exited 65.
+- This establishes a toolchain/runtime mismatch and actual test failures; it
+  does not prove that changing the runner fixes every failure or that SDK
+  business logic is defective. Test assertions and SDK sources were not changed.
+
+The existing uncommitted workflow already selected `xcode-27`, set the Xcode
+path and added artifact upload. Those changes were retained and completed.
+GitHub's [runner software inventory](https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md)
+lists Xcode 27.0 (`27A266a`) at `/Applications/Xcode_27.app`, including iOS 27.0
+SDK/runtime. The script additionally verifies the requested Xcode version.
+
+## Local checks actually executed
+
+- `/bin/bash -n scripts/test-ios.sh`: passed using macOS Bash 3.2.57.
+- Workflow YAML parsing and checks of runner, exact version guard, unconditional
+  upload and hidden-file inclusion: passed using Ruby's YAML parser.
+- DemoApp project/scheme structural checks: passed. All three test targets are
+  enabled, referenced test sources exist, integration/UI targets bundle
+  `Subscriptions.storekit`, and both lockfiles match the pinned 1.5.4 revision.
+- 18 isolated command-fixture checks: passed. They execute a copy of the shell
+  script against fake `swift`, `xcodebuild` and `xcrun` commands in fresh temporary
+  directories (including spaces in paths). Cases cover newer/older/mixed
+  runtimes; explicit valid, unavailable, ineligible, iPad and unknown IDs;
+  Xcode version mismatch; resolution, destination, boot, build and test errors.
+  Build/test failure code 65 survives `tee` and the EXIT trap; unstarted phases
+  are marked; a failing test retains a nested result-bundle attachment.
+  These are script checks, **not executed SDK or Simulator tests**.
+- `git diff --check`: passed.
+
+Local fixture summary: `.build/validation/ci-repair-checks/script-checks.log`.
+The harness is at `/tmp/zsublayer-ci-checks/check_ci.py` for this machine/session.
+No real build or Simulator test was run after editing, following the supplied
+repository instruction. A read-only runtime-list attempt before editing hit
+the local sandbox's CoreSimulator XPC restriction; local Xcode reports 27.0.
+
+## Acceptance still pending
+
+Follow the GitHub Actions steps in `TESTING.md` after reviewing and pushing the
+changes. A new run must resolve dependencies, build DemoApp, and pass all unit,
+StoreKit integration and UI tests before the CI repair can be called successful.
+The configured artifact upload includes all phase logs and recursively includes
+the result bundle, but an actual failed-run artifact download remains unverified.
+If tests still fail under Xcode 27.0, use those logs/result bundles to establish
+the cause; do not skip tests, weaken assertions or use `continue-on-error`.
+
+# Validation record — 2026-10-27 (historical)
 
 This record distinguishes compilation, executed simulator tests and environment
 failures. It does not assert production readiness or App Store Sandbox coverage.

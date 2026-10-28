@@ -3,13 +3,51 @@ name: Swift Package CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build-and-test:
-    runs-on: macos-15
+    runs-on: xcode-27
+    timeout-minutes: 35
+
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+      ZSUBLAYER_EXPECTED_XCODE_VERSION: '27.0'
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Resolve, build and test on an installed iOS Simulator
+      - name: Show Xcode and Simulator environment
+        shell: bash
+        run: |
+          mkdir -p .build/validation/environment
+          {
+            echo "DEVELOPER_DIR=$DEVELOPER_DIR"
+            xcodebuild -version
+            swift --version
+            xcrun --sdk iphonesimulator --show-sdk-version
+            xcrun simctl list runtimes
+            xcrun simctl list devices available
+          } 2>&1 | tee .build/validation/environment/toolchain.log
+
+      - name: Resolve, build and test
         run: bash scripts/test-ios.sh
+
+      - name: Upload CI diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zsublayer-ci-diagnostics
+          retention-days: 5
+          if-no-files-found: warn
+          include-hidden-files: true
+          path: |
+            .build/validation/**/toolchain.log
+            .build/validation/**/resolve.log
+            .build/validation/**/build.log
+            .build/validation/**/test.log
+            .build/validation/**/simulator.log
+            .build/validation/**/destinations.log
+            .build/validation/**/simulators.json
+            .build/validation/**/Tests.xcresult/**
