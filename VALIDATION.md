@@ -1,7 +1,47 @@
-# CI native confirmation timing — 2026-10-29
+# CI historical failed-renewal fixture — 2026-10-29
 
-Status: **renewal fixture verified online; revised native cancellation UI passed
-three consecutive local executions; new Actions verification pending**.
+Status: **six targeted parameter executions and full local regression passed;
+new Actions verification pending**.
+
+[Run 40722412128](https://github.com/webszy/swift-zSubLayer/actions/runs/40722412128)
+for `470a237` passed the native cancellation UI test in 35.062 seconds. It also
+passed all 42 unit functions and the other nine integration functions. Both
+billing retry/grace parameters still timed out after 150 seconds. The earlier
+passing renewal run did not establish that the future-expiry fixture was stable.
+
+The 46 MB diagnostic ZIP matches GitHub's SHA-256 digest
+`11e867da71ed3ac6ffbef74c4d636beb53154e357b22ba66c8f800f8592032a9`.
+It used the same iPhone Duo / iOS 27.1 runtime. Native logs show:
+
+- Transaction 7 was scheduled to renew at 16:13:12 UTC, but no renewal of that
+  transaction was recorded before the test cleared it at its deadline.
+- Transaction 8 was scheduled for 16:15:44; renewal was dispatched at 16:15:48,
+  began at 16:16:46 and created the failed transaction only at 16:19:01, after
+  the integration case ended at 16:17:45. The original signed state had expired
+  while native failure processing was still pending.
+
+The fixture now uses Apple's documented `.purchaseDate` / `.renewUntilNow`
+behavior to generate the first failed renewal as historical state inside
+`buyProduct`. Its first signed period expired about 30 seconds ago. It requires
+an Xcode-verified transaction with that past expiration and a native transaction
+whose `hasPurchaseIssue` is true. It then waits for the SDK's existing listeners
+to deliver the billing retry/grace state. The same premium/access and future
+verified grace-deadline assertions remain. Separate actual SDK purchase and
+external renewal cases remain enabled. No manager refresh or retry-on-failure
+is used to satisfy the state assertion.
+
+Both parameters passed three consecutive local executions (six case executions)
+in 0.613 seconds with `TEST SUCCEEDED`. Full regression then passed **53/53
+functions and 68/68 device executions**, with zero failures, skips, expected
+failures or runtime warnings in the xcresult summary. The two renewal parameters
+took 0.247 seconds in the full suite; native cancellation passed in 18.655 seconds.
+Evidence: `.build/validation/ci-run-40722412128/` and
+`.build/validation/ci-renewal-probe/`, including `HistoricalRenewalTests.xcresult`,
+`FullHistoricalRenewalTests.xcresult` and `full-historical-summary.json`.
+
+# CI native confirmation timing — 2026-10-29 (historical)
+
+Status: **revised native cancellation UI passed online in run 40722412128**.
 
 [Run 40718204412](https://github.com/webszy/swift-zSubLayer/actions/runs/40718204412)
 for `d20a0f2` passed all 42 unit functions and all 10 StoreKit integration

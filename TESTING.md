@@ -116,14 +116,18 @@ When testing accelerated subscription expiry or billing failures, set
 `SKTestSession.timeRate` **before** purchasing. Changing it afterward does not
 retroactively shorten an existing transaction's signed expiration date.
 Billing retry/grace tests use `.realTime` and Apple's test-only `purchaseDate`
-option to create a verified transaction whose subscription expires in about
-30 seconds. That exercises a native failed renewal while preserving the real
-billing retry/grace lifetimes; accelerated time would shrink those state windows
-below observed CI delivery delays. The fixture requires a verified Xcode
-transaction with a future, imminent expiration before waiting for SDK access.
+option with `.renewUntilNow` to generate a signed purchase whose first period
+expired about 30 seconds ago, together with its failed renewal. This establishes
+the native billing issue inside the purchase call instead of waiting for a
+background renewal timer. CI has delayed that timer by minutes or failed to run
+it before the event wait ended. Real-time billing retry/grace lifetimes keep the
+result observable after synchronization; accelerated time would shrink those
+state windows below observed CI delivery delays. The fixture requires a verified
+Xcode transaction with the intended past expiration and a native transaction
+with a purchase issue before waiting for the SDK's own listeners.
 It uses the monthly product when the calendar anniversary exists and yearly
-otherwise to handle month-end dates. The separate purchase test still requires
-the real SDK purchase to publish access immediately.
+otherwise to handle month-end dates. The separate purchase and external renewal
+tests still require the SDK to publish access from actual purchases and renewals.
 
 Renewal delivery has a 150-second deadline and a three-minute per-case time
 limit. The test requires the same verified billing/grace state, its future signed

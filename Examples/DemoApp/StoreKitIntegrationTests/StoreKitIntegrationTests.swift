@@ -140,12 +140,12 @@ struct StoreKitIntegrationTests {
         session.shouldEnterBillingRetryOnRenewal = true
         session.billingGracePeriodIsEnabled = grace
         session.timeRate = .realTime
-        // Backdate a real signed purchase so it renews shortly, while retry/grace
-        // retain their real-time lifetimes. Accelerating time also shortens these
-        // states and lets a busy CI daemon skip them before delivery.
+        // Generate a real signed purchase and its first failed renewal together.
+        // A past anniversary makes renewUntilNow process the renewal in this
+        // call, without relying on a delayed background renewal timer.
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let deadline = Date().addingTimeInterval(30)
+        let deadline = Date().addingTimeInterval(-30)
         // A monthly anniversary may not exist at month-end; yearly covers that
         // case, while monthly covers February 29 in a year after a leap year.
         let candidates: [(String, Calendar.Component)] = [(Self.monthly, .month), (Self.yearly, .year)]
@@ -155,14 +155,16 @@ struct StoreKitIntegrationTests {
                   abs(anniversary.timeIntervalSince(deadline)) < 1 else { return nil }
             return (id, date)
         }.first)
-        let purchased = try await session.buyProduct(identifier: productID, options: [.purchaseDate(purchaseDate)])
+        let purchased = try await session.buyProduct(
+            identifier: productID, options: [.purchaseDate(purchaseDate, renewalBehavior: .renewUntilNow)]
+        )
         let expiry = try #require(purchased.expirationDate)
         try #require(purchased.environment == .xcode)
-        try #require(expiry > Date() && expiry <= deadline.addingTimeInterval(1))
-        try await waitFor { manager.hasActiveEntitlement(for: productID) }
+        try #require(expiry < Date() && abs(expiry.timeIntervalSince(deadline)) < 1)
+        try #require(session.allTransactions().contains { $0.hasPurchaseIssue })
         do {
-            // The runner has taken over a minute to synchronize a renewal.
-            // Real-time retry/grace remain observable throughout that delay.
+            // Observe the SDK's own listeners; never refresh to deliver this event.
+            // Real-time retry/grace remain valid throughout CI synchronization.
             try await waitFor(timeout: 150) {
                 if grace {
                     if case .gracePeriod = manager.subscriptionStatus { return manager.isPremium }
