@@ -1,4 +1,35 @@
-# CI renewal fixture correction — 2026-10-28
+# CI native confirmation timing — 2026-10-29
+
+Status: **renewal fixture verified online; revised native cancellation UI passed
+three consecutive local executions; new Actions verification pending**.
+
+[Run 40718204412](https://github.com/webszy/swift-zSubLayer/actions/runs/40718204412)
+for `d20a0f2` passed all 42 unit functions and all 10 StoreKit integration
+functions, including both billing retry/grace parameters. Its only failure was
+the native cancellation UI test's 20-second confirmation wait.
+
+The diagnostic ZIP matches GitHub's SHA-256 digest
+`24e1df0a47e9f7e2196f60903782d429687cf4ed7e7bbb5f2f0d683b3135d85e`.
+The UI log shows the Purchase tap at 17.71 seconds and the first matching
+close-button lookup at 38.95 seconds, near the confirmation wait's deadline.
+The retained screenshot and SpringBoard hierarchy show the genuine local
+`Xcode` payment sheet and its `dismiss` / `close` button at failure. This was
+a presentation/automation timing failure, not a missing product or Apple
+Account dialog.
+
+The test now waits up to 60 seconds for an enabled, hittable Purchase button
+and up to 60 seconds for the genuine confirmation's cancel control. It still
+requires tapping that native control, a `.cancelled` SDK result, no premium
+access and no transactions. Failure attachments remain enabled.
+
+On Xcode 27.1 / iPhone Duo / iOS 27.1, the revised UI test passed three
+consecutive executions in 37.074, 15.782 and 15.109 seconds; `xcodebuild`
+reported `TEST SUCCEEDED`. No retry-on-failure option was used.
+
+Evidence: `.build/validation/ci-run-40718204412/` and
+`.build/validation/ci-native-confirmation-timing/RepeatedUITests.xcresult`.
+
+# CI renewal fixture correction — 2026-10-28 (historical)
 
 Status: **full local regression passed, 53/53 functions; final timeout-bound
 check passed; new GitHub Actions verification pending**.

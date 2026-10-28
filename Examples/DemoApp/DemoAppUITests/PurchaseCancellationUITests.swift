@@ -18,6 +18,12 @@ final class PurchaseCancellationUITests: XCTestCase {
         app.launch()
         let purchase = app.buttons["purchase.com.example.zsublayer.monthly"]
         XCTAssertTrue(purchase.waitForExistence(timeout: 15))
+        let purchaseReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in purchase.isEnabled && purchase.isHittable },
+            object: nil
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [purchaseReady], timeout: 60), .completed,
+                       "Purchase must be enabled and hittable before tapping")
         XCTAssertEqual(app.staticTexts["premiumState"].label, "isPremium: false")
         purchase.tap()
 
@@ -33,7 +39,8 @@ final class PurchaseCancellationUITests: XCTestCase {
             predicate: NSPredicate { _, _ in controls.contains { $0.exists && $0.isHittable } },
             object: nil
         )
-        guard XCTWaiter.wait(for: [confirmation], timeout: 20) == .completed,
+        // Hosted CI can deliver the native sheet at the previous 20-second deadline.
+        guard XCTWaiter.wait(for: [confirmation], timeout: 60) == .completed,
               let cancel = controls.first(where: { $0.exists && $0.isHittable }) else {
             for attachment in [XCTAttachment(string: app.debugDescription),
                                XCTAttachment(screenshot: app.screenshot()),

@@ -108,6 +108,9 @@ control inside the local sheet's `Xcode` navigation bar, including SpringBoard's
 `dismiss` identifier and lowercase `close` label. It requires the actual
 `.cancelled` outcome after tapping it, with no entitlement or transaction.
 A generic Apple Account sign-in Cancel button cannot satisfy this query.
+Before tapping Purchase, the test waits up to 60 seconds for the button to be
+enabled and hittable. The native confirmation also has a bounded 60-second
+wait: CI evidence shows the sheet appearing at the previous 20-second deadline.
 
 When testing accelerated subscription expiry or billing failures, set
 `SKTestSession.timeRate` **before** purchasing. Changing it afterward does not
