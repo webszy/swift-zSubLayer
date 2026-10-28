@@ -1,6 +1,71 @@
-# CI repair validation — 2026-10-28
+# CI destination discovery follow-up — 2026-10-28
 
-Status: **local CI configuration/script checks passed; repaired GitHub Actions
+Status: **local regression checks passed; a new GitHub Actions run is still
+required**. This follow-up has not been compiled, run on a Simulator, committed
+or pushed locally. SDK sources, public APIs, StoreKit behavior and test assertions
+are unchanged.
+
+## Failure established from the actual runner
+
+Inspected the complete job log and downloaded the diagnostic artifact from
+[run 40671349268](https://github.com/webszy/swift-zSubLayer/actions/runs/40671349268),
+commit `5f09b820a81b69e429d0b5ded8084b093fde463b`:
+
+- Xcode 27.0 (`27A266a`), iOS Simulator SDK 27.0 and both package resolvers worked.
+- `simulators.json` contains available iOS 27.0 iPhones, all shut down. iOS 27.1
+  is also installed and must remain excluded when using SDK 27.0.
+- The initial `-showdestinations` output lists only generic Simulator/device
+  placeholders and My Mac. The previous script required each candidate UUID
+  to appear in that output, so it rejected all available iPhones before boot.
+  Xcode 27 uses the heading `Destinations compatible with` in this output;
+  parsing the human-readable heading/list is unnecessary for device selection.
+- The script exited 1 with `No compatible iOS 17+ iPhone simulator for SDK 27.0`.
+  Neither Build nor Test ran. This failure provides no evidence of an SDK defect.
+- Artifact upload succeeded. The diagnostic ZIP was actually downloaded and its
+  eight files inspected, including resolve, build, test, destination and Simulator
+  logs/inventory. No xcresult exists because testing never started. Result-bundle
+  upload after a real test failure remains to be verified.
+
+## Correction and local checks
+
+Candidate selection now uses CoreSimulator's available device/runtime inventory
+and the existing SDK version bounds, including for explicit UUID overrides.
+`-showdestinations` is saved for diagnostics without filtering candidates.
+After `simctl bootstatus -b` completes, Xcode must successfully resolve build
+settings for that exact destination, with `-sdk iphonesimulator` and a 120-second
+destination timeout. Failure still stops the script before Build/Test and is
+saved in `destinations.log`; there is no fallback destination or skipped test.
+
+- Replayed the downloaded `simulators.json` and `destinations.log` against the
+  committed script using command fixtures: reproduced exit 1 and the same
+  no-compatible-Simulator error.
+- Replayed the same payloads against the corrected script: passed. The fixture
+  requires boot to complete before destination validation, then requires Build
+  and Test to use that same validated UUID and Simulator SDK.
+- All **21/21 command-fixture checks passed**. They also cover legacy placeholder
+  output, newer/unavailable/unknown/iPad overrides, wrong Xcode, dependency errors,
+  boot errors, explicit destination rejection and Build/Test exit-code propagation.
+  A destination rejection exits 65 before Build; test failure retains the full
+  mock result-bundle attachment. These are script checks, not real Apple tests.
+- `/bin/bash -n scripts/test-ios.sh` and `git diff --check`: passed.
+
+Evidence is under `.build/validation/ci-followup-checks/`; the downloaded artifact
+is under `.build/validation/ci-run-40671349268/`. The session's fixture harness is
+`/tmp/zsublayer-ci-checks/check_ci.py`. No real compilation or Simulator execution
+was performed after editing, following the repository instruction.
+
+## Retest
+
+Review and push this follow-up, then inspect the new Actions run. Require a
+selected iOS 27.0 iPhone, completed boot and successful explicit destination
+validation, followed by successful DemoApp Build and all three test targets.
+If any phase fails, download `zsublayer-ci-diagnostics` and inspect the recorded
+phase logs and result bundle when present. CI repair is unverified until the
+actual run passes in full.
+
+# Initial CI repair validation — 2026-10-28 (historical)
+
+Status at initial local validation: **local CI configuration/script checks passed; repaired GitHub Actions
 run not executed or verified**. No commit or push was made. The prior simulator
 results below do not validate this revision.
 

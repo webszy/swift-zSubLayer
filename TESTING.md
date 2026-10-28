@@ -18,10 +18,16 @@ From the package directory:
 bash scripts/test-ios.sh
 ```
 
-The script selects an installed Xcode and an available iPhone simulator listed
-as an eligible DemoApp destination. Its runtime must be iOS 17+ and no newer
+The script selects an installed Xcode and an available iPhone simulator from
+CoreSimulator's device/runtime inventory. Its runtime must be iOS 17+ and no newer
 than the selected Xcode's Simulator SDK major/minor version. It prefers the
 newest compatible runtime, then an already booted device, and waits for boot.
+It then asks Xcode to resolve build settings for that exact destination with
+`-sdk iphonesimulator` and a 120-second destination timeout before building.
+Xcode's initial `-showdestinations` output is saved for diagnostics; a fresh
+runner may list only generic placeholders before Simulator boot, so that text
+is not used to filter candidate devices. An unresolvable explicit destination
+still fails the script before build/test; it never selects a fallback device.
 It runs `swift package resolve`, `swift package dump-package`, an explicit
 `xcodebuild -resolvePackageDependencies`, `xcodebuild build` and `xcodebuild test`.
 Both resolvers use committed versions; Xcode populates a separate fresh package

@@ -61,7 +61,7 @@ swift package "${spm_options[@]}" resolve 2>&1 | tee "$ZSUBLAYER_ARTIFACTS/resol
 swift package "${spm_options[@]}" dump-package > "$ZSUBLAYER_ARTIFACTS/package.json" 2>> "$ZSUBLAYER_ARTIFACTS/resolve.log"
 
 project_options=(-project Examples/DemoApp/DemoApp.xcodeproj -scheme DemoApp
-    -configuration Debug
+    -configuration Debug -sdk iphonesimulator
     -derivedDataPath "$ZSUBLAYER_ARTIFACTS/DerivedData"
     -clonedSourcePackagesDirPath "$ZSUBLAYER_ARTIFACTS/SourcePackages"
     -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile
@@ -69,13 +69,14 @@ project_options=(-project Examples/DemoApp/DemoApp.xcodeproj -scheme DemoApp
 # Xcode has its own package workspace. Populate it explicitly on a fresh runner;
 # a successful `swift package resolve` alone does not populate this directory.
 xcodebuild "${project_options[@]}" -resolvePackageDependencies 2>&1 | tee -a "$ZSUBLAYER_ARTIFACTS/resolve.log"
+# Diagnostic only: a fresh runner can list just generic placeholders until boot.
 xcodebuild "${project_options[@]}" -showdestinations 2>&1 | tee "$ZSUBLAYER_ARTIFACTS/destinations.log"
 xcrun simctl list -j > "$ZSUBLAYER_ARTIFACTS/simulators.json" 2> "$ZSUBLAYER_ARTIFACTS/simulator.log"
 
 # Validate overrides too. simctl's "available" list can include newer runtimes
 # installed for another Xcode, including ones shown by -showdestinations.
 ZSUBLAYER_SIMULATOR_ID="$(python3 - "$ZSUBLAYER_ARTIFACTS" <<'PY'
-import json, os, re, subprocess, sys
+import json, os, subprocess, sys
 from pathlib import Path
 
 artifacts = Path(sys.argv[1])
@@ -85,9 +86,6 @@ def version(value):
     return tuple((list(map(int, value.split('.'))) + [0, 0])[:2])
 
 sdk_version = version(sdk)
-destinations = (artifacts / 'destinations.log').read_text()
-available = destinations.split('Available destinations for', 1)[-1].split('Ineligible destinations for', 1)[0]
-destination_ids = set(re.findall(r'platform:iOS Simulator,.*?id:([0-9A-Fa-f-]{36})[, }]', available))
 runtimes = {r['identifier']: r for r in inventory['runtimes'] if r.get('isAvailable')}
 candidates = []
 for runtime_id, entries in inventory['devices'].items():
@@ -99,8 +97,7 @@ for runtime_id, entries in inventory['devices'].items():
     if not (version('17.0') <= runtime_version <= sdk_version):
         continue
     for device in entries:
-        if (device.get('isAvailable') and device['name'].startswith('iPhone')
-                and device['udid'] in destination_ids):
+        if device.get('isAvailable') and device['name'].startswith('iPhone'):
             candidates.append((runtime_version, device.get('state') == 'Booted', device['udid'], device['name'], runtime['version']))
 requested = os.environ.get('ZSUBLAYER_SIMULATOR_ID')
 if requested:
@@ -120,6 +117,9 @@ xcrun simctl bootstatus "$ZSUBLAYER_SIMULATOR_ID" -b 2>&1 | tee -a "$ZSUBLAYER_A
 project_options+=(-destination "platform=iOS Simulator,id=$ZSUBLAYER_SIMULATOR_ID"
     -destination-timeout 120)
 
+# Let Xcode resolve the explicit destination after boot; do not parse the
+# human-readable destination listing or silently fall back to another device.
+xcodebuild "${project_options[@]}" -showBuildSettings 2>&1 | tee -a "$ZSUBLAYER_ARTIFACTS/destinations.log"
 xcodebuild "${project_options[@]}" build 2>&1 | tee "$ZSUBLAYER_ARTIFACTS/build.log"
 xcodebuild "${project_options[@]}" -parallel-testing-enabled NO \
     -resultBundlePath "$ZSUBLAYER_ARTIFACTS/Tests.xcresult" test 2>&1 | tee "$ZSUBLAYER_ARTIFACTS/test.log"
